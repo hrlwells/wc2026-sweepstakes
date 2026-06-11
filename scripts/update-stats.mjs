@@ -92,13 +92,17 @@ Rules:
   // Strip any accidental markdown fences
   const cleaned = textBlock.text.replace(/```json|```/g, '').trim();
 
-  let parsed;
-  try {
-    parsed = JSON.parse(cleaned);
-  } catch (e) {
-    console.error('Failed to parse Claude response:', cleaned.slice(0, 500));
-    throw new Error('Claude did not return valid JSON');
-  }
+let parsed;
+try {
+  // Try to extract JSON object from response even if wrapped in text
+  const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error('No JSON object found');
+  parsed = JSON.parse(jsonMatch[0]);
+} catch (e) {
+  console.error('Failed to parse Claude response:', cleaned.slice(0, 500));
+  // Fall back to all teams at Group Stage rather than failing
+  parsed = {};
+}
 
   return parsed;
 }
