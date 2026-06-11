@@ -1,4 +1,5 @@
-#!/usr/bin/env node
+#!/usr/bin/env node import { WebSocket } from 'ws';
+globalThis.WebSocket = WebSocket;
 /**
  * WC2026 Sweepstakes — Daily Update Script
  * =========================================
