@@ -1,4 +1,7 @@
-#!/usr/bin/env node import { WebSocket } from 'ws';
+#!/usr/bin/env node
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const WebSocket = require('ws');
 globalThis.WebSocket = WebSocket;
 /**
  * WC2026 Sweepstakes — Daily Update Script
