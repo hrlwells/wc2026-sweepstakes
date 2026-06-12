@@ -60,9 +60,10 @@ Return ONLY a valid JSON object with this exact structure — no preamble, no ma
     "ga": 0,
     "gd": 0,
     "round": "Group Stage",
+    "eliminated": false,
     "fixtures": [
-      { "date": "Jun 12", "opponent": "OpponentName", "score": "2-1", "upcoming": false },
-      { "date": "Jun 17", "opponent": "OpponentName", "score": null, "upcoming": true }
+      { "date": "Jun 12", "time": "5:00 AM AEST", "opponent": "OpponentName", "score": "2-1", "upcoming": false },
+      { "date": "Jun 17", "time": "8:00 AM AEST", "opponent": "OpponentName", "score": null, "upcoming": true }
     ]
   }
 }
@@ -74,7 +75,9 @@ Rules:
 - "score" = "X-Y" string for played matches (team's goals first), null for upcoming
 - "upcoming" = true if the match hasn't been played yet
 - Include all group stage matches plus any knockout matches played
-- If a team is eliminated, their "round" = the last round they reached
+- "eliminated" = true only if the team has been mathematically knocked out of the tournament (lost in knockout stage, or cannot qualify from group stage). Otherwise false, even if they've lost a group match.
+- "round" = the last round they reached or are currently competing in
+- "time" = the kickoff time converted to AEST (UTC+10), formatted like "5:00 AM AEST" or "11:00 AM AEST"
 - If the tournament hasn't started yet, return all teams with pts:0, gf:0, ga:0, gd:0, round:"Group Stage"
 - Return data for ALL ${ALL_TEAMS.length} teams listed above`;
 
@@ -127,7 +130,7 @@ function normalise(rawData) {
 
     if (!raw) {
       console.warn(`⚠️  Missing data for ${team}, using defaults`);
-      result[team] = { pts: 0, gf: 0, ga: 0, gd: 0, round: 'Group Stage', fixtures: [] };
+      result[team] = { pts: 0, gf: 0, ga: 0, gd: 0, round: 'Group Stage', eliminated: false, fixtures: [] };
       continue;
     }
 
@@ -137,17 +140,19 @@ function normalise(rawData) {
     const ga    = typeof raw.ga  === 'number' ? raw.ga  : 0;
     const gd    = gf - ga;
 
-    const fixtures = Array.isArray(raw.fixtures)
-      ? raw.fixtures.map(f => ({
-          date:     f.date     || '',
-          opponent: f.opponent || '',
-          score:    f.score    || null,
-          upcoming: !!f.upcoming,
-        }))
-      : [];
+  const fixtures = Array.isArray(raw.fixtures)
+  ? raw.fixtures.map(f => ({
+      date:     f.date     || '',
+      time:     f.time     || '',
+      opponent: f.opponent || '',
+      score:    f.score    || null,
+      upcoming: !!f.upcoming,
+    }))
+  : [];
 
-    result[team] = { pts, gf, ga, gd, round, fixtures };
-  }
+const eliminated = !!raw.eliminated;
+
+result[team] = { pts, gf, ga, gd, round, eliminated, fixtures };
 
   return result;
 }
@@ -157,16 +162,17 @@ function normalise(rawData) {
 async function writeToSupabase(data) {
   console.log('📝 Writing results to Supabase...');
 
-  const rows = Object.entries(data).map(([team, stats]) => ({
-    team,
-    pts:      stats.pts,
-    gf:       stats.gf,
-    ga:       stats.ga,
-    gd:       stats.gd,
-    round:    stats.round,
-    fixtures: stats.fixtures,
-    updated_at: new Date().toISOString(),
-  }));
+ const rows = Object.entries(data).map(([team, stats]) => ({
+  team,
+  pts:        stats.pts,
+  gf:         stats.gf,
+  ga:         stats.ga,
+  gd:         stats.gd,
+  round:      stats.round,
+  eliminated: stats.eliminated,
+  fixtures:   stats.fixtures,
+  updated_at: new Date().toISOString(),
+}));
 
   const { error } = await supabase
     .from('team_stats')
