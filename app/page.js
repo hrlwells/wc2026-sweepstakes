@@ -6,7 +6,7 @@ async function getTeamStats() {
   try {
     // In production this calls our own API route which reads from Supabase
     const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
-    const res = await fetch(`${baseUrl}/api/team-stats`, { next: { revalidate: 3600 } });
+    const res = await fetch(`${baseUrl}/api/team-stats`, { next: { revalidate: 0 } });
     if (!res.ok) throw new Error('Failed to fetch');
     return res.json();
   } catch {
