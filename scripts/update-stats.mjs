@@ -94,13 +94,21 @@ Rules:
 
 let parsed;
 try {
-  // Try to extract JSON object from response even if wrapped in text
-  const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error('No JSON object found');
-  parsed = JSON.parse(jsonMatch[0]);
+  // Find the first '{' and walk forward tracking brace depth to find its match
+  const start = cleaned.indexOf('{');
+  if (start === -1) throw new Error('No JSON object found');
+  let depth = 0, end = -1;
+  for (let i = start; i < cleaned.length; i++) {
+    if (cleaned[i] === '{') depth++;
+    else if (cleaned[i] === '}') {
+      depth--;
+      if (depth === 0) { end = i; break; }
+    }
+  }
+  if (end === -1) throw new Error('No matching closing brace found');
+  parsed = JSON.parse(cleaned.slice(start, end + 1));
 } catch (e) {
-  console.error('Failed to parse Claude response:', cleaned.slice(0, 500));
-  // Fall back to all teams at Group Stage rather than failing
+  console.error('Failed to parse Claude response:', cleaned.slice(0, 1000));
   parsed = {};
 }
 
