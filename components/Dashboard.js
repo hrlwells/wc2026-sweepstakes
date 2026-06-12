@@ -23,14 +23,21 @@ function getRoundScore(team, teamStats) {
 }
 
 function getTeamStatus(team, teamStats) {
-  const r = getStats(team, teamStats).round;
+  const s = getStats(team, teamStats);
+  const r = s.round;
+
+  if (s.eliminated) {
+    return { bg: 'rgba(230,29,37,0.07)', color: '#d06060', border: 'rgba(230,29,37,0.2)', hot: false, out: true };
+  }
+
   if (r === 'Champion')      return { bg: 'rgba(200,150,42,0.18)',  color: C.gold,    border: 'rgba(200,150,42,0.5)',  hot: true,  out: false };
   if (r === 'Runner-up')     return { bg: 'rgba(192,192,192,0.12)', color: '#C0C0C0', border: 'rgba(192,192,192,0.4)', hot: true,  out: false };
   if (r === 'Semi-final')    return { bg: 'rgba(42,57,141,0.3)',    color: '#8BA0E8', border: 'rgba(42,57,141,0.5)',   hot: true,  out: false };
   if (r === 'Quarter-final') return { bg: 'rgba(58,172,59,0.18)',   color: '#5ed45f', border: 'rgba(58,172,59,0.45)', hot: true,  out: false };
   if (r === 'Round of 16')   return { bg: 'rgba(58,172,59,0.08)',   color: '#4ab84b', border: 'rgba(58,172,59,0.2)',  hot: false, out: false };
   if (r === 'Round of 32')   return { bg: 'rgba(255,255,255,0.04)', color: C.muted,   border: C.border,               hot: false, out: false };
-  return                            { bg: 'rgba(230,29,37,0.07)',   color: '#d06060', border: 'rgba(230,29,37,0.2)',  hot: false, out: true  };
+  // Group Stage, not eliminated — neutral grey, no X
+  return { bg: 'rgba(255,255,255,0.04)', color: C.muted, border: C.border, hot: false, out: false };
 }
 
 // ─── SHARED UI ────────────────────────────────────────────────────────────────
@@ -100,7 +107,7 @@ function FixturesPanel({ team, teamStats }) {
           border: `1px solid ${f.upcoming ? C.border : 'rgba(255,255,255,0.12)'}`,
           opacity: f.upcoming ? 0.85 : 1,
         }}>
-          <span style={{ fontSize: 10, color: C.muted, minWidth: 34 }}>{f.date}</span>
+          <span style={{ fontSize: 10, color: C.muted, minWidth: 70 }}>{f.date}{f.time ? ` · ${f.time}` : ''}</span>
           <span style={{ fontSize: 11, flex: 1 }}>
             {flag(team)} {team} <span style={{ color: C.muted }}>vs</span> {flag(f.opponent)} {f.opponent}
           </span>
