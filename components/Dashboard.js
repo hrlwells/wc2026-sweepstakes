@@ -22,6 +22,21 @@ function getRoundScore(team, teamStats) {
   return ROUND_SCORE[getStats(team, teamStats).round] || 0;
 }
 
+// ─── SINGLE SOURCE OF TRUTH FOR SORTING ──────────────────────────────────────
+// Every tab uses this so the same team always ranks the same everywhere.
+// Order: furthest round → most points → best goal difference → most goals for → team name (alphabetical, final stable tiebreak)
+function sortByTier(tier, teamStats) {
+  return DRAWS.slice().sort((a, b) => {
+    const sa = getStats(a[tier], teamStats);
+    const sb = getStats(b[tier], teamStats);
+    return (ROUND_SCORE[sb.round] || 0) - (ROUND_SCORE[sa.round] || 0)
+      || sb.pts - sa.pts
+      || sb.gd  - sa.gd
+      || sb.gf  - sa.gf
+      || a[tier].localeCompare(b[tier]);
+  });
+}
+
 function getTeamStatus(team, teamStats) {
   const s = getStats(team, teamStats);
   const r = s.round;
@@ -64,9 +79,9 @@ function SectionHead({ children }) {
 // ─── PRIZE STRIP ──────────────────────────────────────────────────────────────
 
 function PrizeStrip({ teamStats }) {
-  const byTop     = DRAWS.slice().sort((a, b) => getRoundScore(b.top, teamStats)     - getRoundScore(a.top, teamStats)     || getStats(b.top, teamStats).pts     - getStats(a.top, teamStats).pts);
-  const byRegular = DRAWS.slice().sort((a, b) => getRoundScore(b.regular, teamStats) - getRoundScore(a.regular, teamStats) || getStats(b.regular, teamStats).pts - getStats(a.regular, teamStats).pts);
-  const byLow     = DRAWS.slice().sort((a, b) => getRoundScore(b.low, teamStats)     - getRoundScore(a.low, teamStats)     || getStats(b.low, teamStats).pts     - getStats(a.low, teamStats).pts);
+  const byTop     = sortByTier('top', teamStats);
+  const byRegular = sortByTier('regular', teamStats);
+  const byLow     = sortByTier('low', teamStats);
 
   const prizes = [
     { icon: '🏆', label: 'Overall winner', d: byTop[0],              team: byTop[0].top,              amount: '$200' },
@@ -180,20 +195,9 @@ function AllDrawsTab({ teamStats, expandedTeam, onToggleTeam }) {
 // ─── LEADERBOARD TAB ──────────────────────────────────────────────────────────
 
 function LeaderboardTab({ teamStats }) {
-  const sorted = DRAWS.slice().sort((a, b) =>
-    getRoundScore(b.top, teamStats) - getRoundScore(a.top, teamStats) ||
-    getStats(b.top, teamStats).pts - getStats(a.top, teamStats).pts   ||
-    getStats(b.top, teamStats).gd  - getStats(a.top, teamStats).gd
-  );
-
-  const byRegular = DRAWS.slice().sort((a, b) =>
-    getRoundScore(b.regular, teamStats) - getRoundScore(a.regular, teamStats) ||
-    getStats(b.regular, teamStats).pts  - getStats(a.regular, teamStats).pts
-  );
-  const byLow = DRAWS.slice().sort((a, b) =>
-    getRoundScore(b.low, teamStats) - getRoundScore(a.low, teamStats) ||
-    getStats(b.low, teamStats).pts  - getStats(a.low, teamStats).pts
-  );
+  const sorted    = sortByTier('top', teamStats);
+  const byRegular = sortByTier('regular', teamStats);
+  const byLow     = sortByTier('low', teamStats);
   const rankIn = (arr, player) => arr.findIndex(d => d.player === player);
 
   const prizeBadge = (rank) => {
@@ -281,13 +285,7 @@ function TierTab({ tier, teamStats }) {
   const label = tier === 'top' ? 'Top Teams' : tier === 'regular' ? 'Regular Teams' : 'Low Ranked Teams';
   const tierColor = tier === 'top' ? C.gold : tier === 'regular' ? '#378ADD' : C.green;
 
-  const sorted = DRAWS.slice().sort((a, b) => {
-    const sa = getStats(a[tier], teamStats), sb = getStats(b[tier], teamStats);
-    return (ROUND_SCORE[sb.round] || 0) - (ROUND_SCORE[sa.round] || 0)
-      || sb.pts - sa.pts
-      || sb.gd  - sa.gd
-      || sb.gf  - sa.gf;
-  });
+  const sorted = sortByTier(tier, teamStats);
 
   const rankLabel = i => i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`;
 
@@ -336,9 +334,9 @@ function TierTab({ tier, teamStats }) {
 // ─── PRIZES TAB ───────────────────────────────────────────────────────────────
 
 function PrizesTab({ teamStats }) {
-  const byTop     = DRAWS.slice().sort((a, b) => getRoundScore(b.top, teamStats)     - getRoundScore(a.top, teamStats)     || getStats(b.top, teamStats).pts     - getStats(a.top, teamStats).pts);
-  const byRegular = DRAWS.slice().sort((a, b) => getRoundScore(b.regular, teamStats) - getRoundScore(a.regular, teamStats) || getStats(b.regular, teamStats).pts - getStats(a.regular, teamStats).pts);
-  const byLow     = DRAWS.slice().sort((a, b) => getRoundScore(b.low, teamStats)     - getRoundScore(a.low, teamStats)     || getStats(b.low, teamStats).pts     - getStats(a.low, teamStats).pts);
+  const byTop     = sortByTier('top', teamStats);
+  const byRegular = sortByTier('regular', teamStats);
+  const byLow     = sortByTier('low', teamStats);
   const rankLabel = i => i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`;
 
   const prizes = [
