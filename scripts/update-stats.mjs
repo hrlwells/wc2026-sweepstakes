@@ -1,22 +1,16 @@
 #!/usr/bin/env node
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
-const WebSocket = require('ws');
-globalThis.WebSocket = WebSocket;
-
 /**
- * WC2026 Sweepstakes — Daily Update Script
- * =========================================
- * Runs via GitHub Actions every day at 5pm AEST (07:00 UTC).
- * Uses Claude to scrape live World Cup results, then writes them to Supabase.
+ * WC2026 Sweepstakes — Daily Update Script (football-data.org version)
+ * ====================================================================
+ * Runs via GitHub Actions daily. Pulls World Cup data directly from
+ * football-data.org's free API — no AI, no web search, $0 per run.
  *
  * Required environment variables:
- *   ANTHROPIC_API_KEY      — your Anthropic API key
- *   NEXT_PUBLIC_SUPABASE_URL        — your Supabase project URL
- *   SUPABASE_SERVICE_ROLE_KEY       — Supabase service role key (not anon key — needs write access)
+ *   FOOTBALL_DATA_API_KEY      — your football-data.org API token
+ *   NEXT_PUBLIC_SUPABASE_URL   — your Supabase project URL
+ *   SUPABASE_SERVICE_ROLE_KEY  — Supabase service role key (write access)
  */
 
-import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
@@ -34,133 +28,205 @@ const ALL_TEAMS = [
 
 const ROUNDS = ["Group Stage","Round of 32","Round of 16","Quarter-final","Semi-final","Runner-up","Champion"];
 
-// ─── CLIENTS ─────────────────────────────────────────────────────────────────
+// Map football-data.org team names → our team names.
+// Add/adjust entries here if the logs report a name we couldn't match.
+const NAME_MAP = {
+  "United States": "USA",
+  "United States of America": "USA",
+  "Türkiye": "Türkiye",
+  "Turkey": "Türkiye",
+  "Côte d'Ivoire": "Ivory Coast",
+  "Ivory Coast": "Ivory Coast",
+  "Korea Republic": "South Korea",
+  "South Korea": "South Korea",
+  "IR Iran": "Iran",
+  "Iran": "Iran",
+  "Czech Republic": "Czechia",
+  "Czechia": "Czechia",
+  "DR Congo": "DR Congo",
+  "Congo DR": "DR Congo",
+  "Democratic Republic of Congo": "DR Congo",
+  "Bosnia and Herzegovina": "Bosnia & Herzegovina",
+  "Bosnia & Herzegovina": "Bosnia & Herzegovina",
+  "Curaçao": "Curacao",
+  "Curacao": "Curacao",
+  "Cabo Verde": "Cape Verde",
+  "Cape Verde": "Cape Verde",
+};
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+// Map football-data.org knockout stage names → our round labels
+const STAGE_MAP = {
+  "GROUP_STAGE": "Group Stage",
+  "LAST_32": "Round of 32",
+  "ROUND_OF_32": "Round of 32",
+  "LAST_16": "Round of 16",
+  "ROUND_OF_16": "Round of 16",
+  "QUARTER_FINALS": "Quarter-final",
+  "QUARTER_FINAL": "Quarter-final",
+  "SEMI_FINALS": "Semi-final",
+  "SEMI_FINAL": "Semi-final",
+  "THIRD_PLACE": "Semi-final",
+  "FINAL": "Runner-up", // finalists are at least runner-up; winner upgraded below
+};
+
+const API_BASE = "https://api.football-data.org/v4";
+const COMPETITION = "WC";
+
+// ─── CLIENTS ─────────────────────────────────────────────────────────────────
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY, // service role key for write access
+  process.env.SUPABASE_SERVICE_ROLE_KEY,
 );
 
-// ─── STEP 1: Ask Claude to fetch and parse live WC results ───────────────────
+const apiHeaders = { "X-Auth-Token": process.env.FOOTBALL_DATA_API_KEY };
 
-async function fetchLiveResults() {
-  console.log('🤖 Asking Claude to fetch live World Cup 2026 results...');
-
-  const prompt = `You are a sports data assistant. Search the web for the latest FIFA World Cup 2026 results and standings right now.
-
-For each of these teams, return their current tournament data:
-${ALL_TEAMS.join(', ')}
-
-Return ONLY a valid JSON object with this exact structure — no preamble, no markdown, no explanation:
-{
-  "TeamName": {
-    "pts": 0,
-    "gf": 0,
-    "ga": 0,
-    "gd": 0,
-    "round": "Group Stage",
-    "eliminated": false,
-    "fixtures": [
-      { "date": "Jun 12", "time": "5:00 AM AEST", "opponent": "OpponentName", "score": "2-1", "upcoming": false },
-      { "date": "Jun 17", "time": "8:00 AM AEST", "opponent": "OpponentName", "score": null, "upcoming": true }
-    ]
-  }
+// Resolve an API team name to our canonical name
+function canonical(name) {
+  if (!name) return null;
+  if (NAME_MAP[name]) return NAME_MAP[name];
+  if (ALL_TEAMS.includes(name)) return name;
+  return null; // unmatched
 }
 
-Rules:
-- "round" must be one of: ${ROUNDS.join(', ')}
-- "pts" = total tournament points (group stage: W=3,D=1,L=0; knockout teams keep group pts)
-- "gf" = goals for total, "ga" = goals against total, "gd" = gf minus ga
-- "score" = "X-Y" string for played matches (team's goals first), null for upcoming
-- "upcoming" = true if the match hasn't been played yet
-- "time" = the kickoff time converted to AEST (UTC+10), formatted like "5:00 AM AEST" or "11:00 AM AEST"
-- "eliminated" = true only if the team has been mathematically knocked out of the tournament (lost in knockout stage, or cannot qualify from group stage). Otherwise false, even if they've lost a group match.
-- "round" = the last round they reached or are currently competing in
-- Include all group stage matches plus any knockout matches played
-- If the tournament hasn't started yet, return all teams with pts:0, gf:0, ga:0, gd:0, round:"Group Stage", eliminated:false
-- Return data for ALL ${ALL_TEAMS.length} teams listed above
-
-IMPORTANT: Your final response must be ONLY the JSON object, with no other text before or after it.`;
-
-  const response = await anthropic.messages.create({
-    model: 'claude-haiku-4-5-20251001',
-    max_tokens: 8000,
-    tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 8 }],
-    messages: [{ role: 'user', content: prompt }],
-  });
-
-  // Extract the LAST text block — Claude may produce several while searching,
-  // the final one should contain the JSON
-  const textBlocks = response.content.filter(b => b.type === 'text');
-  if (!textBlocks.length) throw new Error('No text response from Claude');
-  const textBlock = textBlocks[textBlocks.length - 1];
-
-  // Strip any accidental markdown fences
-  const cleaned = textBlock.text.replace(/```json|```/g, '').trim();
-
-  let parsed;
-  try {
-    // Find the first '{' and walk forward tracking brace depth to find its match
-    const start = cleaned.indexOf('{');
-    if (start === -1) throw new Error('No JSON object found');
-    let depth = 0, end = -1;
-    for (let i = start; i < cleaned.length; i++) {
-      if (cleaned[i] === '{') depth++;
-      else if (cleaned[i] === '}') {
-        depth--;
-        if (depth === 0) { end = i; break; }
-      }
-    }
-    if (end === -1) throw new Error('No matching closing brace found');
-    parsed = JSON.parse(cleaned.slice(start, end + 1));
-  } catch (e) {
-    console.error('Failed to parse Claude response:', cleaned.slice(0, 1000));
-    parsed = {};
-  }
-
-  return parsed;
+function monthDay(utcDate) {
+  // "2026-06-12T19:00:00Z" → "Jun 12"
+  const d = new Date(utcDate);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'Australia/Sydney' });
 }
 
-// ─── STEP 2: Validate and normalise the data ─────────────────────────────────
+function aestTime(utcDate) {
+  // "2026-06-12T19:00:00Z" → "5:00 AM AEST"
+  const d = new Date(utcDate);
+  const t = d.toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Australia/Sydney' });
+  return `${t} AEST`;
+}
 
-function normalise(rawData) {
+// ─── FETCH ───────────────────────────────────────────────────────────────────
+
+async function fetchJson(path) {
+  const res = await fetch(`${API_BASE}${path}`, { headers: apiHeaders });
+  if (!res.ok) {
+    throw new Error(`API ${path} returned ${res.status}: ${await res.text()}`);
+  }
+  return res.json();
+}
+
+// ─── BUILD TEAM DATA ─────────────────────────────────────────────────────────
+
+async function buildTeamData() {
+  console.log('📡 Fetching standings from football-data.org...');
+  const standingsData = await fetchJson(`/competitions/${COMPETITION}/standings`);
+
+  console.log('📡 Fetching matches from football-data.org...');
+  const matchesData = await fetchJson(`/competitions/${COMPETITION}/matches`);
+
+  // Initialise every team with defaults
   const result = {};
-
   for (const team of ALL_TEAMS) {
-    const raw = rawData[team];
+    result[team] = { pts: 0, gf: 0, ga: 0, gd: 0, round: 'Group Stage', eliminated: false, fixtures: [] };
+  }
 
-    if (!raw) {
-      console.warn(`⚠️  Missing data for ${team}, using defaults`);
-      result[team] = { pts: 0, gf: 0, ga: 0, gd: 0, round: 'Group Stage', eliminated: false, fixtures: [] };
-      continue;
+  const unmatched = new Set();
+
+  // ── Standings: pts, gf, ga, gd from group tables ──
+  // standings is an array; group-stage tables have type "TOTAL", one per group
+  for (const standing of standingsData.standings || []) {
+    if (standing.type !== 'TOTAL') continue;
+    for (const row of standing.table || []) {
+      const apiName = row.team?.name;
+      const team = canonical(apiName);
+      if (!team) { if (apiName) unmatched.add(apiName); continue; }
+      result[team].pts = row.points ?? 0;
+      result[team].gf  = row.goalsFor ?? 0;
+      result[team].ga  = row.goalsAgainst ?? 0;
+      result[team].gd  = (row.goalsFor ?? 0) - (row.goalsAgainst ?? 0);
+    }
+  }
+
+  // ── Matches: fixtures, furthest round reached, elimination ──
+  const matches = matchesData.matches || [];
+
+  // Track the furthest stage each team appears in, and whether they won the final
+  const furthestStage = {}; // team → round label index
+  let championTeam = null;
+
+  for (const m of matches) {
+    const homeName = canonical(m.homeTeam?.name);
+    const awayName = canonical(m.awayTeam?.name);
+    if (m.homeTeam?.name && !homeName) unmatched.add(m.homeTeam.name);
+    if (m.awayTeam?.name && !awayName) unmatched.add(m.awayTeam.name);
+
+    const stageLabel = STAGE_MAP[m.stage] || 'Group Stage';
+    const stageIdx = ROUNDS.indexOf(stageLabel);
+
+    // Record fixtures for both teams
+    for (const [team, oppName] of [[homeName, m.awayTeam?.name], [awayName, m.homeTeam?.name]]) {
+      if (!team) continue;
+      const opp = canonical(oppName) || oppName || 'TBD';
+      const finished = m.status === 'FINISHED';
+      let scoreStr = null;
+      if (finished && m.score?.fullTime) {
+        const isHome = team === homeName;
+        const ft = m.score.fullTime;
+        scoreStr = isHome ? `${ft.home}-${ft.away}` : `${ft.away}-${ft.home}`;
+      }
+      result[team].fixtures.push({
+        date: monthDay(m.utcDate),
+        time: aestTime(m.utcDate),
+        opponent: opp,
+        score: scoreStr,
+        upcoming: !finished,
+        _raw: m.utcDate,
+      });
+
+      // Track furthest stage reached (any appearance counts)
+      if (stageIdx > (furthestStage[team] ?? 0)) furthestStage[team] = stageIdx;
     }
 
-    const round = ROUNDS.includes(raw.round) ? raw.round : 'Group Stage';
-    const pts   = typeof raw.pts === 'number' ? raw.pts : 0;
-    const gf    = typeof raw.gf  === 'number' ? raw.gf  : 0;
-    const ga    = typeof raw.ga  === 'number' ? raw.ga  : 0;
-    const gd    = gf - ga;
-    const eliminated = !!raw.eliminated;
+    // Determine champion: winner of the FINAL
+    if (m.stage === 'FINAL' && m.status === 'FINISHED' && m.score?.winner) {
+      const winnerName = m.score.winner === 'HOME_TEAM' ? homeName : m.score.winner === 'AWAY_TEAM' ? awayName : null;
+      if (winnerName) championTeam = winnerName;
+    }
+  }
 
-    const fixtures = Array.isArray(raw.fixtures)
-      ? raw.fixtures.map(f => ({
-          date:     f.date     || '',
-          time:     f.time     || '',
-          opponent: f.opponent || '',
-          score:    f.score    || null,
-          upcoming: !!f.upcoming,
-        }))
-      : [];
+  // Apply furthest stage as the team's round
+  for (const team of ALL_TEAMS) {
+    const idx = furthestStage[team] ?? 0;
+    result[team].round = ROUNDS[idx] || 'Group Stage';
+  }
+  // Upgrade champion
+  if (championTeam) result[championTeam].round = 'Champion';
 
-    result[team] = { pts, gf, ga, gd, round, eliminated, fixtures };
+  // ── Elimination logic ──
+  // A team is eliminated if all their fixtures are finished AND they didn't
+  // progress to a later stage that has upcoming matches. Simplest reliable rule:
+  // eliminated = they have no upcoming fixtures AND they are not the champion
+  // AND the tournament isn't over for them at a winning position.
+  for (const team of ALL_TEAMS) {
+    const f = result[team].fixtures;
+    const hasUpcoming = f.some(x => x.upcoming);
+    const played = f.some(x => !x.upcoming);
+    // If they've played at least one game, have nothing upcoming, and aren't champion/runner-up final → eliminated
+    if (played && !hasUpcoming && result[team].round !== 'Champion' && result[team].round !== 'Runner-up') {
+      result[team].eliminated = true;
+    }
+    // Sort each team's fixtures by date, then remove the temporary _raw field
+    f.sort((a, b) => new Date(a._raw || 0) - new Date(b._raw || 0));
+    f.forEach(x => { delete x._raw; });
+  }
+
+  if (unmatched.size) {
+    console.log('\n⚠️  Unmatched team names from API (add these to NAME_MAP):');
+    for (const n of unmatched) console.log(`   "${n}"`);
+    console.log('');
   }
 
   return result;
 }
 
-// ─── STEP 3: Write to Supabase ────────────────────────────────────────────────
+// ─── WRITE TO SUPABASE ───────────────────────────────────────────────────────
 
 async function writeToSupabase(data) {
   console.log('📝 Writing results to Supabase...');
@@ -182,7 +248,6 @@ async function writeToSupabase(data) {
     .upsert(rows, { onConflict: 'team' });
 
   if (error) throw error;
-
   console.log(`✅ Updated ${rows.length} teams in Supabase`);
 }
 
@@ -192,15 +257,13 @@ async function main() {
   console.log(`\n🏆 WC2026 Sweepstakes Update — ${new Date().toLocaleString('en-AU', { timeZone: 'Australia/Sydney' })} AEST\n`);
 
   try {
-    const raw  = await fetchLiveResults();
-    const data = normalise(raw);
+    const data = await buildTeamData();
 
-    // Log summary
     const active = Object.values(data).filter(d => d.round !== 'Group Stage').length;
-    console.log(`📊 Teams beyond group stage: ${active}`);
+    const elim   = Object.values(data).filter(d => d.eliminated).length;
+    console.log(`📊 Teams beyond group stage: ${active} · eliminated: ${elim}`);
 
     await writeToSupabase(data);
-
     console.log('\n✅ Update complete\n');
   } catch (err) {
     console.error('\n❌ Update failed:', err.message);
