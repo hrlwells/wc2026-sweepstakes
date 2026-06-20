@@ -85,9 +85,9 @@ Rules:
 IMPORTANT: Your final response must be ONLY the JSON object, with no other text before or after it.`;
 
   const response = await anthropic.messages.create({
-    model: 'claude-opus-4-5',
-    max_tokens: 16000,
-    tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 8000,
+    tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 8 }],
     messages: [{ role: 'user', content: prompt }],
   });
 
