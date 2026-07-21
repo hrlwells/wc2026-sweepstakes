@@ -1,6 +1,6 @@
 # Wedding Fitness Tracker
 
-A private 16-week wedding-prep tracker (the build to Sat 21 Nov 2026). Next.js + Supabase, deployed on Vercel. Every tap — check-offs, weigh-ins, run times, steps, notes — is saved to Supabase and loads on any device.
+A private 16-week wedding-prep tracker (the build to Sat 21 Nov 2026). Next.js + Supabase, deployed on Vercel. Every tap — check-offs, weigh-ins, run times, steps, notes — is saved to Supabase and loads on any device..
 
 **Testing mode:** wide open, no login. Anyone with the URL and the app can read/write the single shared dataset. We'll add magic-link auth before real use..
 
